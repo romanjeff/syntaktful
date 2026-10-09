@@ -92,13 +92,47 @@ changed → ship its new default parameters"). This is a generic outbound
 event primitive, not a periodic bulk state mirror. Wrong shape for what
 chip 2's `memcpy(dst, 0, 432)` needs.
 
-### Still unknown: the real source of chip 2's mirror
+### Four more families, swept exhaustively, none a match either
 
-Two real, independently-confirmed candidates investigated and ruled out
-above. **The actual bridge channel that populates address `0` as seen
-from chip 2 — the true source of its 432-byte mirror — has not yet been
-found.** A systematic sweep of the remaining `0xfc04xxxx` register space
-for other descriptor-shaped configurations is ongoing.
+A full sweep of every `0xfc04xxxx` and `0xfc03xxxx` cluster MAIN OS
+configures found four more descriptor-shaped channels beyond the three
+above — none anywhere near 432 bytes or the right shape:
+
+| Family | Buffer target | Size | What it is |
+|---|---|---|---|
+| `0xfc0453xx` | Dynamic, USB-core peripheral register | 0x8000 or variable | Generic USB endpoint transfer descriptor, reused by 8+ unrelated call sites (mass-storage-style transfers) |
+| `0xfc0454xx` | UART data registers (`0xec07000c`/`0xec07400c`) | 80 / 120 / 10 | A 2-port UART/MIDI-DIN TX bridge — software ring → hardware UART FIFO |
+| `0xfc0455xx` (a second slot, distinct from the known audio ring) | Dynamic, `0x8000c600`–`0x8000db00` | 1204 | A large DRAM ring with its own allocator — shape fits a sample-streaming/scope-display buffer, not control data |
+| `0xfc0457xx` | Dynamic RAM, via the ColdFire's own internal DMA controller (`0xfc0cc0xx`) | 2048 / 1026 / 16 | Not an FPGA-bridge channel at all — the CPU's own on-chip DMA engine, unrelated |
+
+Every descriptor-shaped register MAIN OS configures in this address
+space is now accounted for — seven real families total, none matching.
+(`0xfc03xxxx` was also checked: the one cluster found there,
+`0xfc03c000`–`c038`, is a simple SPI/serial-flash-style command/status
+controller, not buffer-descriptor shaped.)
+
+### Still unknown, and the model may need to change
+
+**The actual bridge channel that populates address `0` as seen from
+chip 2 has not been found**, despite an exhaustive sweep of MAIN OS's
+side. The leading hypothesis now: this may be a **hardwired FPGA
+address-decode window with no software-side configuration at all** — if
+every other real channel left a clear "program a buffer+size+doorbell"
+instruction footprint and this one left none, that's consistent with the
+window simply always being live, wired in the FPGA bitstream rather than
+set up by either ColdFire. If true, this specific window genuinely can't
+be widened or redirected from software on either chip — not a search
+failure, a hard architectural fact.
+
+**This reframes what the compressor actually needs, though.** The 432-
+byte mirror is a continuous, per-block *audio-rate* stream — never the
+right tool for the compressor's actual requirement, which is occasional,
+knob-driven *control-parameter* updates (threshold, ratio, attack,
+release, mix, sidechain type). That's a much better fit for the
+already-confirmed **tagged-event mailbox** (`0xfc0451xx`, see above) —
+previously set aside only because it didn't match the audio mirror's
+shape, which was never actually the target. Whether chip 2 has a
+receiver for this mailbox at all hasn't been checked yet — in progress.
 
 ## Open questions
 
