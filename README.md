@@ -59,6 +59,10 @@ Full detail, with how this was determined, in
 
 - [`docs/architecture.md`](docs/architecture.md) — hardware, the two-chip
   split, the firmware container format, toolchain discipline
+- [`docs/bridge-architecture.md`](docs/bridge-architecture.md) — the
+  FPGA bridge connecting the two ColdFires: confirmed register families,
+  each chip's SRAM map, and what's been ruled out while hunting for the
+  compressor's actual cross-chip parameter path
 - [`docs/compressor.md`](docs/compressor.md) — the master compressor port:
   Digitakt mk1's DSP chain as the design reference, Syntakt's draft
   implementation, and the current open question about where it hooks in
