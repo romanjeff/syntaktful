@@ -1,0 +1,18 @@
+# Never commit Elektron's firmware or copyrighted docs - bring your own
+*.syx
+*.bin
+*.aplib.bin
+firmware/
+*.pdf
+
+# Ghidra project artifacts
+*.gpr
+*.rep/
+
+# WSL/objdump scratch output from Gate F cross-checks
+*.dis
+*.objdump.txt
+
+# OS cruft
+.DS_Store
+Thumbs.db
