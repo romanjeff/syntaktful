@@ -52,12 +52,21 @@ slightly from true post-mix "glue" character if the FPGA's internal
 summing saturates, which Modded-Cycles' own research confirms it can.
 `research/syntakt_comp_draft.s` has been rewritten for this hook model.
 
+- **Parameter storage decided**: a freestanding struct, with a confirmed
+  home at `0x80007f90`–`0x80008000` on the second ColdFire (112 bytes,
+  fits the 52-byte struct with margin) — the gap between its two
+  boot-time SRAM copy chunks, confirmed free of static references by two
+  independent methods. Not emulator-confirmed yet — see
+  [`docs/compressor.md`](docs/compressor.md) for the honest caveat.
+
 ## In progress
 
-Parameter storage (a freestanding struct vs. tracing Syntakt's native
-group → parameter lookup) is held open — the new hook model needs its own
-free-RAM slot on the second ColdFire specifically, a different gap than
-the earlier MAIN-OS-hook version of this question had.
+M3's draft is now fully addressed except for the LUT table contents
+(`comp_log_table`/`comp_exp_table`, which depend on this chip's real
+sample headroom) and the exact register-save frame size at the hook
+site — both flagged in the draft itself, not guessed. M4 (the actual
+mixer-menu page content) was blocked on parameter storage; that's clear
+now, so M4 is next up.
 
 ## Not yet started
 

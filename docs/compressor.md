@@ -187,9 +187,22 @@ this question — it's purely the DSP hook point that's open, not the UI.
 
 ## Parameter storage
 
-Not yet decided: a freestanding state struct (simpler, but loses
-integration with Syntakt's existing p-lock system) versus continuing to
-trace the native group → parameter lookup mechanism (more consistent with
-how every other Syntakt parameter works, uncertain remaining effort). Held
-open pending the DSP-hook question above, since the answer may change what
-"native" storage even looks like on whichever chip ends up owning this.
+**Decided: a freestanding state struct**, not the native group → parameter
+lookup mechanism every other Syntakt parameter uses. The native route was
+held open as "more consistent, uncertain effort"; once a confirmed home
+for a freestanding struct existed, there was no longer a strong reason to
+keep chasing it — a master-bus-only insert with no per-step automation
+loses little by skipping p-lock integration.
+
+**Home found: `0x80007f90`–`0x80008000`** on the second ColdFire (112
+bytes, the gap between its two boot-time SRAM copy chunks), fitting the
+52-byte struct with margin. Confirmed free of static references by two
+independent methods plus raw-byte inspection (zero/padding on both
+sides), cross-checked against every other catalogued region on this chip.
+**Caveat, not glossed over:** this is "no static reference found," not a
+traced-execution zero — no emulator exists yet for this chip to go
+further. Two other gaps that looked equally free by the same static
+method turned out to be real DSP tables reached via computed/indexed
+addressing, invisible to literal-operand scanning — a real, recorded
+lesson from this same search, not just a disclaimer. Verify in an
+emulator (M5) before trusting this on real hardware.

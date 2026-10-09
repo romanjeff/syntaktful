@@ -82,7 +82,20 @@ compressor_run:
     | file that's flagged rather than guessed.
     lea     -16(%sp),%sp             | PLACEHOLDER -- verify against hook site
     movem.l %d0-%d7/%a0-%a3,(%sp)
-    movea.l g_syntakt_comp_state,%a2  | symbolic -- real SRAM address TBD (new gap)
+    movea.l #0x80007f90,%a2            | state struct home: the 112-byte gap between
+                                        | the second ColdFire's two boot-time SRAM copy
+                                        | chunks (0x80007f90-0x80008000), confirmed
+                                        | zero static references by two independent
+                                        | methods plus raw-byte inspection (all zero
+                                        | padding on both sides). NOT emulator-confirmed
+                                        | -- no traced-execution check exists for this
+                                        | chip yet, so "no static reference" is the best
+                                        | available evidence, not proof nothing writes
+                                        | here at runtime via a computed address. Two
+                                        | other gaps that looked free by the same static
+                                        | method turned out to be real DSP tables reached
+                                        | via computed addressing -- verify in an
+                                        | emulator (M5) before trusting this on hardware.
 
     move.l  #0x20,%macsr             | signed, fractional, no saturation
     movea.l #TRACKBASE,%a1           | a1 = persistent per-FRAME cursor (track 0's
