@@ -64,21 +64,42 @@ audio-serial (SSI0) or I2C0 peripherals, so the main analog (Cirrus
 Logic) DAC output is very likely fed by a separate, pure-hardware
 FPGA-to-codec path that never touches either ColdFire.
 
-### `0xfc0456xx` — a second, matched DMA pair (confirmed, ruled out as the mirror source)
+### `0xfc0456xx` — a dormant factory self-test loopback (confirmed, ruled out for any live purpose)
 
 Configured in the *same* init routine as the audio ring above:
 `0xfc045690` = buffer base `0x80001800` (the known ring, restated here),
 `0xfc0456c0` = buffer base **`0x80000000`** — chip 1's own SRAM, a
-*different*, previously-uncharacterized 1024-byte ping-pong buffer.
+*different* 1024-byte ping-pong buffer.
 
-This channel moves 1024 bytes/block as **32 distinct per-frame values
-per track** (an audio-rate envelope/gain ramp — each value produced by an
-EMAC multiply against a running per-track sample counter, then `>>8`).
-**Confirmed NOT chip 2's parameter mirror**: the shape doesn't match
-(1024 bytes vs. chip 2's 432; "32 frames per track" vs. chip 2's single
-discrete struct fields per track; 432 isn't even a clean multiple of this
-channel's 32-frame unit). Most likely feeds the FPGA's own mixer or
-metering stage. A real, useful finding — just not the one being hunted.
+This channel moves 1024 bytes/block as 32 distinct per-frame values per
+track. **Confirmed NOT chip 2's parameter mirror** (wrong size/shape).
+It was then suspected of being a live mixer-gain or metering channel into
+the FPGA's hardware mixdown — a promising reframing that would have let
+the compressor ride an existing real-time channel instead of needing any
+new cross-chip mechanism. **Investigated fully, and ruled out — cleanly,
+not ambiguously:**
+
+- The "per-frame value" is a literal self-wrapping **phase accumulator**
+  (`0x444e1f14`+track, incremented every frame, wrapped at a per-waveform
+  period length) driving a **wavetable lookup** before the multiply — the
+  shape of a tone generator, not a gain ramp.
+- An exhaustive literal-address sweep of the *entire* MAIN OS image found
+  **zero code anywhere** that writes the multiply coefficient
+  (`0x444e1f54`+track) except one function, `0x4008466c` — reachable only
+  from a block of code guarded by manufacturing/bootstrap strings
+  (`FACTORY RESET`, `PLAY_START_%d`, `RECORD_START_%d`,
+  `WRITE_AUDIO_TESTED`), called with a hardcoded full-scale constant, not
+  anything read from a mixer parameter.
+- A second, parallel loop in the same ISR *captures* the known USB audio
+  ring (`0x80001800`) into a shared table — a recorder, running in
+  lockstep with the first loop's player.
+
+**Verdict: a built-in play/record audio self-test loopback (generate a
+tone, record the result, verify the hardware), dormant outside
+manufacturing — not a live control path of any kind.** No mixer knob
+anywhere in this picture, and no runtime code path ever touches it. A
+genuinely useful negative, not a stretched one — the reframing it was
+investigated for doesn't pan out.
 
 ### `0xfc0451xx` — a generic tagged-event mailbox (confirmed, ruled out as the mirror source)
 
@@ -131,8 +152,33 @@ knob-driven *control-parameter* updates (threshold, ratio, attack,
 release, mix, sidechain type). That's a much better fit for the
 already-confirmed **tagged-event mailbox** (`0xfc0451xx`, see above) —
 previously set aside only because it didn't match the audio mirror's
-shape, which was never actually the target. Whether chip 2 has a
-receiver for this mailbox at all hasn't been checked yet — in progress.
+shape, which was never actually the target.
+
+**Checked: chip 2 does not receive this mailbox at all.** An exhaustive
+sweep of chip 2's own disassembly for the mailbox's defining literals
+(the `0x08005555` sentinel, the `0x800051e0`-family buffer addresses,
+bit-test alternatives) found zero matches — including one caught false
+positive (a data table of ascending SRAM addresses the linear
+disassembler briefly misread as sequential tag-dispatch code, correctly
+debunked rather than reported as a hit). The mailbox is real and used by
+5+ chip-1-internal call sites, but it's most likely feeding some other
+subsystem entirely (UI/display is the leading candidate) — not chip 2.
+**Not cheaply fixable either**: since chip 2 has no existing receive
+skeleton for this format, adding a new tag doesn't help — a full receive
+loop would need to be written from scratch, no cheaper than any other
+new channel.
+
+**Net state after four investigated candidates (audio mirror, matched
+DMA pair, tagged mailbox, all ruled out) plus two newer findings above:**
+there may genuinely be no existing, free, software-level channel for new
+cross-chip control data. The one remaining untested avenue is the
+DSP-boot-handshake protocol (`0x400829d8`+, "DSP BOOT FAILURE" dispatcher)
+— a real, working, bidirectional channel, characterized so far only as
+boot-time; whether it has any post-boot generality is unchecked. Paused
+pending a decision on whether to pursue that, or accept that live
+parameter delivery needs genuinely new infrastructure (most plausibly: a
+new receive loop on chip 2 for the mailbox format chip 1 already sends,
+since that at least reuses the proven send-side half).
 
 ## Open questions
 
