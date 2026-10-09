@@ -103,61 +103,81 @@ gets written directly into an FPGA bridge register. The 8-track mixdown —
 gains, pans, the actual stereo sum — happens inside the Spartan FPGA, in
 hardware. There is no software master buffer on that chip to hook.
 
-Three ways forward, in the order they're being pursued:
+**Decided, 2026-10-09: per-track pre-scale, applied on the second ColdFire
+before the FPGA handoff.** Here's how the investigation actually went:
 
-1. **Check whether MAIN OS (the first ColdFire) reads the FPGA's
-   already-summed stereo output back.** **Found, 2026-10-09.** A real
-   interrupt handler (`0x40101bae`, full register + EMAC context
-   save/restore, ends `rte`) reads a fixed FPGA bridge window
-   (`0x80001800`, ping-ponged ±0x400, 2048-byte wrap) — 32 stereo frames,
-   the family's standard block size — rescales each sample and writes the
-   de-interleaved result to `0x45511108`/`0x4551110c` (L/R), then calls
-   Syntakt's USB audio feeder directly on that buffer (all 3 of the
-   feeder's call sites in the whole image use this exact address). The
-   same bridge-read prologue recurs at 4 other handler sites — a live,
-   repeatedly-exercised read, not a one-off. This is exactly the shape
-   Digitakt's own `0x8000ea70` plays on its single chip, just relocated,
-   and confirms no DSP beyond format conversion exists on this path today
-   — a clean tap, not an existing processing stage to extend.
-   Found by tracing Syntakt's own USB audio feeder backward from its copy
-   source, per the architectural reasoning that USB audio-out cannot exist
-   without a software-readable digital master-mix buffer — the same
-   technique that worked, with direct precedent, on the sibling
-   Model:Cycles (whose own USB feeder source is explicitly labeled "mix
-   stéréo" in independent public research).
-   **One gap left before this is a settled hook point:** the only
-   confirmed consumer of `0x45511108` so far is the USB feeder. Whether
-   the main analog (Cirrus Logic) DAC output shares this same buffer, or
-   is fed by a separate pure-hardware FPGA-to-codec path with no ColdFire
-   mediation at all, is unconfirmed — and matters, since the goal is
-   compressing both outputs with one insert. Being checked now.
-2. **Compute the detector from a local software pre-sum, apply the result
-   as a uniform per-track gain multiplier before the FPGA handoff.** This
-   does **not** require reconstructing or modifying the FPGA bitstream, and
-   that's a hard constraint for this project regardless of how promising
-   any approach looks — the FPGA image is effectively a black box we don't
-   want to be in the business of resynthesizing. The reasoning that makes
-   this viable without touching it: if the FPGA's per-track gain/pan stage
-   is linear (near-certain for a hardware mixer), a *uniform* gain
-   multiplier applied to all 8 per-track buffers before an unmodified FPGA
-   mixdown is mathematically identical to applying that same multiplier to
-   the final stereo sum after mixdown — the scalar commutes through a
-   linear mix regardless of each track's own gain/pan weighting. The
-   detector would run on a local pre-sum used only to derive the gain
-   value (never written anywhere, never fed back to the FPGA); the FPGA
-   keeps doing exactly what it already does, just on pre-scaled inputs.
-   **Real, documented caveat, not hypothetical:** Modded-Cycles' own public
-   research on this same hardware family found that "the internal mix can
-   saturate, creating inter-track interaction" — if the FPGA's summing
-   isn't perfectly linear near clipping, a pre-scale diverges slightly from
-   true post-mix compression right at the loudest moments. Narrow, but
-   real — and testable cheaply in Modded-Cycles' Unicorn emulator before
-   ever touching hardware. Held as the fallback if (1) comes back negative.
-3. **Look for a loopback path** on either chip that reads the FPGA's output
-   back for the analog-overdrive stage specifically (known to have at
-   least a partly real analog signal path via an SSI2164 VCA chip). Worth
-   a look regardless of (1)'s outcome, since it's cheap once the
-   bridge-read search technique already exists.
+1. **Checked whether MAIN OS (the first ColdFire) reads the FPGA's
+   already-summed stereo output back.** **Found:** a real interrupt handler
+   (`0x40101bae`, full register + EMAC context save/restore, ends `rte`)
+   reads a fixed FPGA bridge window (`0x80001800`, ping-ponged ±0x400,
+   2048-byte wrap) — 32 stereo frames, the family's standard block size —
+   rescales each sample and writes the de-interleaved result to
+   `0x45511108`/`0x4551110c` (L/R), then calls Syntakt's USB audio feeder
+   directly on that buffer. Found by tracing the USB feeder backward from
+   its copy source, with direct precedent from the sibling Model:Cycles
+   (whose own USB feeder source is labeled "mix stéréo" in independent
+   public research). **But a follow-up check found this is very likely
+   USB-only:** MAIN OS has zero traffic to its own on-chip audio-serial
+   (SSI0) or I2C0 peripherals — a real negative, cross-validated against
+   neighboring peripherals (SPI, USB, eDMA) that *are* heavily used in the
+   same image. The most consistent explanation is that the FPGA forks the
+   summed mix two ways in hardware: one copy straight to the Cirrus codec
+   (never touching either ColdFire), one copy into this bridge window
+   purely so MAIN OS can relay it over USB. A compressor inserted only
+   here would affect Overbridge/USB and silently leave the main outputs
+   untouched — not acceptable for a master compressor.
+2. **Considered a software-controllable analog VCA as a true post-fork
+   insert point — investigated and ruled out.** Syntakt's hardware teardown
+   confirmed an SSI2164 (dual-channel VCA) chip exists on the board. The
+   hypothesis was that if MAIN OS could drive it directly, that would be
+   genuine analog-domain gain control reaching the real outputs after any
+   digital fork, with none of the pre-scale's detector/saturation
+   approximations. **This turned out to rest on an unjustified inference:**
+   the teardown only established that the chip exists and that real analog
+   hardware is present on the board — it never placed it on the master bus
+   or the overdrive stage. Syntakt actually has 8 digital voices **and 4
+   dedicated analog voices** (the same architectural family as Analog
+   Rytm), and a dual-channel VCA is far more likely doing standard
+   per-voice amplitude/envelope shaping on those 4 analog voices
+   specifically. This isn't just a confidence problem — it's structurally
+   disqualifying even in the best case: a per-analog-voice VCA could only
+   ever reach 4 of Syntakt's 12 voices. The 8 digital voices sum entirely
+   inside the FPGA and never pass through any analog VCA circuitry. A
+   master compressor has to affect everything, so this angle can't deliver
+   that regardless of how controllable the chip turns out to be. A
+   follow-up check against the real SSI2164 datasheet closed it further:
+   it's a **quad** VCA (not dual) with **no digital control protocol at
+   all** — each of its 4 channels is set by a pure analog control voltage
+   on a dedicated pin, so there was never going to be an "SSI2164 command"
+   to find in MAIN OS's code in the first place, independent of the
+   scope problem above.
+3. **Landed on per-track pre-scale** — computing the detector from a local,
+   unweighted pre-sum of the 8 per-track buffers (on the second ColdFire,
+   right before the FPGA handoff), and applying the resulting gain as a
+   uniform multiplier to all 8 buffers before the FPGA ever sees them.
+   This does **not** touch the FPGA bitstream — a hard constraint for this
+   project regardless of how any other approach pencils out. The reasoning
+   that makes it valid: if the FPGA's per-track gain/pan stage is linear
+   (near-certain for a hardware mixer), a uniform multiplier commutes
+   through a linear mix identically whether applied before or after
+   summing — the scalar reaches the output the same either way, on both
+   of whatever the FPGA forks it to. **Accepted, not resolved, tradeoff:**
+   this is only exactly equivalent to true post-mix compression under that
+   linearity assumption, and Modded-Cycles' own research on this hardware
+   family found the internal mix *can* saturate — exactly the regime where
+   "glue"-style compression does its most audible, characterful work. A
+   pre-scale turns tracks down before they hit that saturation, which is a
+   genuinely different result than letting the real mix saturate and
+   turning the result down afterward, not just a rounding error. Jeff's
+   call, explicitly weighing this tradeoff: proceed anyway rather than
+   pursue a third round of hook-point verification. Worth validating in an
+   emulator (see [`ROADMAP.md`](../ROADMAP.md), M5) before trusting it on
+   real hardware. The draft in
+   [`research/syntakt_comp_draft.s`](../research/syntakt_comp_draft.s) has
+   been rewritten for this hook model: no buffer argument, a single-channel
+   (not stereo) sidechain filter since there's no stereo signal this early
+   in the chain, and an output stage that applies one collapsed dry/wet+
+   gain scalar to all 8 track buffers per frame.
 
 Already known and *not* the answer: the menu-insertion mechanism for a new
 "Compressor" row (hooking right before Syntakt's existing "Internal Mixer"

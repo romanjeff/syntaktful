@@ -40,39 +40,24 @@ is what Digitakt mk1's own filter turned out to be once decompiled).
   already supports (Digitone mk1's second-CPU/section-7 shape); Modwerk
   has an empty placeholder for Syntakt with no research credited yet.
 
+**The hook-point question is now decided** — the full back-and-forth
+(MAIN OS's USB-only tap, a VCA angle investigated and ruled out, landing
+on per-track pre-scale) is in [`docs/compressor.md`](docs/compressor.md).
+Short version: the FPGA does the real mixdown in hardware with no software
+master buffer to hook on either chip, so the compressor computes its
+detector from a local pre-sum of the 8 per-track buffers and applies the
+resulting gain as one scalar to all 8, upstream of the FPGA handoff —
+never touching the FPGA bitstream. Known, accepted tradeoff: this diverges
+slightly from true post-mix "glue" character if the FPGA's internal
+summing saturates, which Modded-Cycles' own research confirms it can.
+`research/syntakt_comp_draft.s` has been rewritten for this hook model.
+
 ## In progress
 
-**The real open question: where does the compressor actually hook in?**
-Tracing the second ColdFire's audio ISR all the way to its output
-disproved the working assumption that it builds a software stereo master
-buffer the way Digitakt mk1's single chip does — the 8 tracks stay
-unsummed in their own per-track buffers right up until a raw pointer to
-them gets handed to the FPGA, which does the real mixdown in hardware.
-Three paths, being pursued in this order (see
-[`docs/compressor.md`](docs/compressor.md) for full reasoning):
-
-1. Check whether MAIN OS reads the FPGA's already-summed output back for
-   metering, master FX, or the analog-overdrive control path — **found**.
-   A real interrupt handler reads a fixed bridge window and feeds it
-   straight to the USB audio feeder — the real analog of Digitakt's
-   software master buffer. **Last open gap:** confirming the main analog
-   DAC output shares this same buffer rather than bypassing it via a
-   separate hardware-only path — checking now.
-2. If not: compute the detector from a local software pre-sum and apply a
-   uniform per-track gain multiplier before the FPGA handoff — provably
-   equivalent to post-mix compression under a linearity assumption, with
-   one known caveat (the internal mix can saturate, per Modded-Cycles'
-   own research on this hardware family) that would need validating in an
-   emulator before trusting it. **Does not require touching the FPGA
-   bitstream** — that's a hard constraint for this project regardless of
-   how any approach otherwise pencils out.
-3. Look for a loopback path specific to the analog-overdrive stage, which
-   is known to have at least a partly real analog signal path.
-
 Parameter storage (a freestanding struct vs. tracing Syntakt's native
-group → parameter lookup) is held open until the hook-point question
-above is resolved, since the answer may change what "native" storage even
-means on whichever chip ends up owning this.
+group → parameter lookup) is held open — the new hook model needs its own
+free-RAM slot on the second ColdFire specifically, a different gap than
+the earlier MAIN-OS-hook version of this question had.
 
 ## Not yet started
 
