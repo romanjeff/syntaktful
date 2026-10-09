@@ -52,9 +52,12 @@ Three paths, being pursued in this order (see
 [`docs/compressor.md`](docs/compressor.md) for full reasoning):
 
 1. Check whether MAIN OS reads the FPGA's already-summed output back for
-   metering, master FX, or the analog-overdrive control path — **in
-   progress**. If so, that's the real analog of Digitakt's software
-   master buffer, and the existing DSP chain ports with no real change.
+   metering, master FX, or the analog-overdrive control path — **found**.
+   A real interrupt handler reads a fixed bridge window and feeds it
+   straight to the USB audio feeder — the real analog of Digitakt's
+   software master buffer. **Last open gap:** confirming the main analog
+   DAC output shares this same buffer rather than bypassing it via a
+   separate hardware-only path — checking now.
 2. If not: compute the detector from a local software pre-sum and apply a
    uniform per-track gain multiplier before the FPGA handoff — provably
    equivalent to post-mix compression under a linearity assumption, with

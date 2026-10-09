@@ -106,30 +106,31 @@ hardware. There is no software master buffer on that chip to hook.
 Three ways forward, in the order they're being pursued:
 
 1. **Check whether MAIN OS (the first ColdFire) reads the FPGA's
-   already-summed stereo output back**, for metering, master FX, or the
-   analog-overdrive control path. If so, that buffer — not anything on the
-   synth-engine chip — is the real analog of Digitakt's `0x8000ea70`, and
-   the whole chain above ports with no real change, just a relocated hook.
-   **Chosen direction, in progress**, now sharpened by a concrete,
-   architecturally-forced target: the intended final hook point is the
-   *post-mix* signal — the same stream that reaches the main DAC and
-   Overbridge/USB. USB audio-out cannot exist without software packaging
-   real digital samples into outgoing packets, so whatever buffer feeds
-   Syntakt's USB audio feeder necessarily *is* the true master mix,
-   regardless of how the FPGA's internal summing or the analog-overdrive
-   stage work internally — any upstream analog summing has to be folded
-   back into one digital stream before it can reach USB or the DAC. There
-   is direct precedent for exactly this shape, on a sibling product in the
-   same ColdFire family: Modded-Cycles' own notes on the Model:Cycles
-   document a USB feeder loop whose copy source is explicitly labeled
-   "mix stéréo" (stereo mix) in their research. Tracing Syntakt's own USB
-   audio driver backward to its feeder's copy source is now the leading
-   approach, ahead of a more general FPGA-bridge-read search. This keeps
-   the project using the same proven approach that works on Digitakt mk1
-   rather than reinventing anything, and sidesteps the FPGA/bitstream
-   question entirely if it pans out — the instinct behind the choice is
-   "don't guess at FPGA internals if there's a software readback path that
-   already does the same job."
+   already-summed stereo output back.** **Found, 2026-10-09.** A real
+   interrupt handler (`0x40101bae`, full register + EMAC context
+   save/restore, ends `rte`) reads a fixed FPGA bridge window
+   (`0x80001800`, ping-ponged ±0x400, 2048-byte wrap) — 32 stereo frames,
+   the family's standard block size — rescales each sample and writes the
+   de-interleaved result to `0x45511108`/`0x4551110c` (L/R), then calls
+   Syntakt's USB audio feeder directly on that buffer (all 3 of the
+   feeder's call sites in the whole image use this exact address). The
+   same bridge-read prologue recurs at 4 other handler sites — a live,
+   repeatedly-exercised read, not a one-off. This is exactly the shape
+   Digitakt's own `0x8000ea70` plays on its single chip, just relocated,
+   and confirms no DSP beyond format conversion exists on this path today
+   — a clean tap, not an existing processing stage to extend.
+   Found by tracing Syntakt's own USB audio feeder backward from its copy
+   source, per the architectural reasoning that USB audio-out cannot exist
+   without a software-readable digital master-mix buffer — the same
+   technique that worked, with direct precedent, on the sibling
+   Model:Cycles (whose own USB feeder source is explicitly labeled "mix
+   stéréo" in independent public research).
+   **One gap left before this is a settled hook point:** the only
+   confirmed consumer of `0x45511108` so far is the USB feeder. Whether
+   the main analog (Cirrus Logic) DAC output shares this same buffer, or
+   is fed by a separate pure-hardware FPGA-to-codec path with no ColdFire
+   mediation at all, is unconfirmed — and matters, since the goal is
+   compressing both outputs with one insert. Being checked now.
 2. **Compute the detector from a local software pre-sum, apply the result
    as a uniform per-track gain multiplier before the FPGA handoff.** This
    does **not** require reconstructing or modifying the FPGA bitstream, and
