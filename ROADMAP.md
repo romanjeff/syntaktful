@@ -64,9 +64,19 @@ summing saturates, which Modded-Cycles' own research confirms it can.
 M3's draft is now fully addressed except for the LUT table contents
 (`comp_log_table`/`comp_exp_table`, which depend on this chip's real
 sample headroom) and the exact register-save frame size at the hook
-site — both flagged in the draft itself, not guessed. M4 (the actual
-mixer-menu page content) was blocked on parameter storage; that's clear
-now, so M4 is next up.
+site — both flagged in the draft itself, not guessed.
+
+**M4 surfaced a real fork.** The compressor's menu page runs on MAIN OS;
+its state struct lives on the second chip's SRAM — two physical chips.
+Tracing how parameter changes normally cross that bridge found a blind
+bulk-memory mirror (432 bytes, re-copied every audio block from a fixed
+FPGA-backed address) rather than a per-parameter message protocol — and
+no evidence of a per-parameter channel to reuse instead. The struct's
+address happens to sit immediately before this mirrored region, so
+widening the existing copy is the lowest-risk path — but whether the
+FPGA's source side actually has those extra bytes to give is unknowable
+from static analysis alone. Choosing between validating this in an
+emulator first versus a narrow real-hardware probe is an open decision.
 
 ## Not yet started
 
